@@ -1,17 +1,17 @@
 # mnl-backup
 
-`moneynlaw.co.kr` 기사와 이미지를 로컬에 안정적으로 백업하고, 기사별 XML과 전체 manifest XML을 생성하는 파이썬 도구입니다.
+`moneynlaw.co.kr` 기사와 이미지를 안정적으로 보관하기 위한 백업 도구다. 원본 HTML, 이미지, 정규화 XML, SQLite DB를 함께 유지하고, 원격 환경에서는 `일간 증분 패키지 + 월간 전체 패키지` 구조로 보관한다.
 
 ## 목표
 
 - 기존 발행 기사 전체를 전수 백업
-- 신규 기사 증분 동기화
-- 원본 HTML, 이미지 바이너리, 정규화 XML, SQLite DB를 함께 유지
-- 나중에 마이그레이션, 포털 전송, 2차 AI 가공에 재사용 가능한 구조 확보
+- 신규/수정 기사 증분 동기화
+- 나중에 다른 CMS export, 네이버/다음 포털 전송, AI 2차 가공에서 재사용 가능한 정규화 데이터 유지
+- 로컬 Mac 전원과 무관한 원격 실행
 
 ## 저장 구조
 
-기본 저장 경로는 `data/`입니다.
+기본 정규화 저장소는 `data/`다.
 
 ```text
 data/
@@ -21,8 +21,27 @@ data/
       html/000143.html
       xml/000143.xml
       media/000143/01.jpg
-    manifests/articles.xml
+    manifests/
+      articles.xml
+      runs/
+        run-000001.xml
 ```
+
+원격 패키지는 로컬 기준으로 아래처럼 분리된다.
+
+```text
+exports/
+  incremental/2026/03/11/mnl-backup-incremental-run000123-....tar.gz
+  full/2026/04/mnl-backup-full-....tar.gz
+
+runtime/
+  state/current.tar.gz
+```
+
+- `data/`: 항상 최신 상태를 유지하는 정규화 저장소
+- `exports/incremental/`: 일별 변경분만 담은 패키지
+- `exports/full/`: 월 1회 전체 상태를 담은 패키지
+- `runtime/state/current.tar.gz`: GitHub Actions 런너 복원용 상태 스냅샷
 
 ## 사용법
 
@@ -38,28 +57,28 @@ python3 -m mnl_backup sync --full
 python3 -m mnl_backup sync
 ```
 
-테스트용 제한 실행:
+실행별 증분 패키지 생성:
 
 ```bash
-python3 -m mnl_backup sync --max-pages 1 --limit 3
+python3 -m mnl_backup --json package-incremental --run-id 123 --output-dir exports
 ```
 
-현황 확인:
+월간 전체 패키지 생성:
 
 ```bash
-python3 -m mnl_backup stats
+python3 -m mnl_backup --json package-full --output-dir exports
 ```
 
-manifest 재생성:
+런너 상태 스냅샷 생성:
 
 ```bash
-python3 -m mnl_backup export
+python3 -m mnl_backup --json state-snapshot --output-dir runtime
 ```
 
-스냅샷 생성:
+상태 복원:
 
 ```bash
-python3 -m mnl_backup --data-dir data snapshot --output-dir exports
+python3 -m mnl_backup restore --snapshot-path runtime/state/current.tar.gz --destination-root .
 ```
 
 OneDrive 업로드:
@@ -69,30 +88,46 @@ export MNL_ONEDRIVE_TENANT_ID="..."
 export MNL_ONEDRIVE_CLIENT_ID="..."
 export MNL_ONEDRIVE_CLIENT_SECRET="..."
 export MNL_ONEDRIVE_DRIVE_ID="..."
-python3 -m mnl_backup onedrive-upload --snapshot-path exports/mnl-backup-20260309T000000Z.tar.gz
+python3 -m mnl_backup onedrive-upload \
+  --snapshot-path exports/full/2026/04/example.tar.gz \
+  --remote-path backups/full/2026/04/example.tar.gz
 ```
 
-## 설계 메모
+OneDrive 다운로드:
 
-- 기사 목록은 `articleList.html?page=N&view_type=sm`에서 수집합니다.
-- 기사 상세는 `articleView.html?idxno=...`에서 메타데이터와 본문을 추출합니다.
-- 증분 동기화 때는 최신 페이지를 다시 읽어 수정 기사도 반영합니다.
-- XML에는 기사 본문 HTML, 본문 텍스트, 타임스탬프, 분류, 작성자, 이미지 로컬 경로와 해시를 함께 저장합니다.
+```bash
+python3 -m mnl_backup onedrive-download \
+  --remote-path state/current.tar.gz \
+  --output-path state/current.tar.gz \
+  --missing-ok
+```
+
+## 설계 원칙
+
+- 수집과 보관을 분리한다.
+  - `service.py`: 기사 수집과 정규화 저장
+  - `packages.py`: 일간 증분/월간 전체 패키징
+  - `snapshot.py`: tar.gz 생성과 복원
+  - `onedrive.py`: SharePoint/OneDrive 전송
+- 정규화 XML을 기준 저장 포맷으로 유지한다.
+  - 기사별 XML
+  - 전체 manifest XML
+  - 실행별 run manifest XML
+- 나중에 CMS export나 포털 전송은 이 정규화 저장소를 읽는 별도 어댑터 계층으로 붙인다.
 
 ## 원격 실행
 
-- 로컬 Mac이 꺼져 있어도 실행되게 하려면 GitHub Actions 같은 원격 스케줄러에서 `sync --full`을 돌리는 것이 가장 단순합니다.
-- 예시 워크플로는 [.github/workflows/mnl-backup.yml](/Users/air/codes/mnl-backup/.github/workflows/mnl-backup.yml)에 추가했습니다.
-- 이 워크플로는 매일 `06:17 KST`에 실행되도록 `21:17 UTC` cron으로 설정되어 있습니다.
-- 원격 런너는 매번 새 환경이므로 기본값은 `전체 백업 -> tar.gz 스냅샷 생성 -> 아티팩트 저장` 흐름입니다.
+- 일간 증분 워크플로: [.github/workflows/mnl-backup-daily.yml](/Users/air/codes/mnl-backup/.github/workflows/mnl-backup-daily.yml)
+  - 매일 `06:17 KST`
+  - `state 복원 -> sync -> 증분 패키지 -> OneDrive 업로드 -> state 갱신`
+- 월간 전체 워크플로: [.github/workflows/mnl-backup-monthly.yml](/Users/air/codes/mnl-backup/.github/workflows/mnl-backup-monthly.yml)
+  - 매월 1일 `10:47 KST`
+  - `state 복원 -> sync -> 전체 패키지 -> OneDrive 업로드 -> state 갱신`
 
-## OneDrive 메모
+## XML 구조 메모
 
-- 무인(background) 업로드는 Microsoft Graph의 app-only 인증을 전제로 구현했습니다.
-- 현재 업로더는 OneDrive app folder 하위에 `snapshots/` 폴더를 만들고 tar.gz 스냅샷을 업로드합니다.
-- 필요한 비밀값은 다음 네 가지입니다.
-  - `MNL_ONEDRIVE_TENANT_ID`
-  - `MNL_ONEDRIVE_CLIENT_ID`
-  - `MNL_ONEDRIVE_CLIENT_SECRET`
-  - `MNL_ONEDRIVE_DRIVE_ID`
-- 이 방식은 Microsoft 365 / OneDrive for Business 쪽이 가장 안정적입니다. 개인용 OneDrive는 사용자 위임 토큰/리프레시 토큰 운영이 더 복잡하므로 기본 구현 범위에서 제외했습니다.
+- 기사별 XML은 제목, 분류, 작성자, 발행/수정 시각, 본문 HTML, 본문 텍스트, 이미지 메타, 해시를 보관한다.
+- `articles.xml`은 전체 기사 인덱스다.
+- `run-xxxxxx.xml`은 특정 동기화 실행에서 새로 생기거나 수정된 기사 목록과 변경 유형을 담는다.
+
+이 구조는 포털 전송용 최종 XML 스키마와 1:1로 같지는 않지만, 나중에 네이버/다음용 어댑터나 CMS별 exporter를 붙이기 쉬운 중간 포맷으로 설계했다.

@@ -1,0 +1,126 @@
+name: mnl-backup-daily
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 21 * * *"
+
+concurrency:
+  group: mnl-backup-archive
+  cancel-in-progress: false
+
+jobs:
+  daily_incremental:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      MNL_ONEDRIVE_TENANT_ID: ${{ secrets.MNL_ONEDRIVE_TENANT_ID }}
+      MNL_ONEDRIVE_CLIENT_ID: ${{ secrets.MNL_ONEDRIVE_CLIENT_ID }}
+      MNL_ONEDRIVE_CLIENT_SECRET: ${{ secrets.MNL_ONEDRIVE_CLIENT_SECRET }}
+      MNL_ONEDRIVE_DRIVE_ID: ${{ secrets.MNL_ONEDRIVE_DRIVE_ID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore previous state snapshot from OneDrive
+        id: restore_state
+        if: ${{ env.MNL_ONEDRIVE_TENANT_ID != '' && env.MNL_ONEDRIVE_CLIENT_ID != '' && env.MNL_ONEDRIVE_CLIENT_SECRET != '' && env.MNL_ONEDRIVE_DRIVE_ID != '' }}
+        run: |
+          python -m mnl_backup --json onedrive-download \
+            --remote-path "state/current.tar.gz" \
+            --output-path "state/current.tar.gz" \
+            --missing-ok > restore-state.json
+          python - <<'PY'
+          import json
+          import os
+
+          with open("restore-state.json", encoding="utf-8") as handle:
+              payload = json.load(handle)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"found={'true' if payload['found'] else 'false'}\n")
+              handle.write(f"path={payload.get('output_path') or ''}\n")
+          PY
+
+      - name: Restore local archive state
+        if: ${{ steps.restore_state.outputs.found == 'true' }}
+        run: python -m mnl_backup restore --snapshot-path "${{ steps.restore_state.outputs.path }}" --destination-root .
+
+      - name: Run sync
+        id: sync
+        run: |
+          python -m mnl_backup --data-dir data --json sync --delay 0.5 > sync.json
+          python - <<'PY'
+          import json
+          import os
+
+          with open("sync.json", encoding="utf-8") as handle:
+              payload = json.load(handle)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"run_id={payload['run_id']}\n")
+              handle.write(f"mode={payload['mode']}\n")
+              handle.write(f"updated_count={payload['updated_count']}\n")
+              handle.write(f"manifest_path={payload['manifest_path']}\n")
+              handle.write(f"run_manifest_path={payload['run_manifest_path']}\n")
+          PY
+
+      - name: Create incremental package
+        id: package
+        run: |
+          python -m mnl_backup --data-dir data --json package-incremental \
+            --run-id "${{ steps.sync.outputs.run_id }}" \
+            --output-dir exports > package.json
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          with open("package.json", encoding="utf-8") as handle:
+              payload = json.load(handle)
+          package_path = Path(payload["package_path"])
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"path={package_path.as_posix()}\n")
+              handle.write(f"name={package_path.name}\n")
+              handle.write(f"remote_dir={payload['remote_dir']}\n")
+          PY
+
+      - name: Upload incremental package as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mnl-backup-incremental-${{ github.run_id }}
+          path: ${{ steps.package.outputs.path }}
+          retention-days: 30
+
+      - name: Upload incremental package to OneDrive
+        if: ${{ env.MNL_ONEDRIVE_TENANT_ID != '' && env.MNL_ONEDRIVE_CLIENT_ID != '' && env.MNL_ONEDRIVE_CLIENT_SECRET != '' && env.MNL_ONEDRIVE_DRIVE_ID != '' }}
+        run: |
+          python -m mnl_backup onedrive-upload \
+            --snapshot-path "${{ steps.package.outputs.path }}" \
+            --remote-path "backups/${{ steps.package.outputs.remote_dir }}/${{ steps.package.outputs.name }}"
+
+      - name: Create runner state snapshot
+        id: state
+        run: |
+          python -m mnl_backup --data-dir data --json state-snapshot --output-dir runtime > state.json
+          python - <<'PY'
+          import json
+          import os
+
+          with open("state.json", encoding="utf-8") as handle:
+              payload = json.load(handle)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"path={payload['snapshot_path']}\n")
+          PY
+
+      - name: Upload runner state snapshot to OneDrive
+        if: ${{ env.MNL_ONEDRIVE_TENANT_ID != '' && env.MNL_ONEDRIVE_CLIENT_ID != '' && env.MNL_ONEDRIVE_CLIENT_SECRET != '' && env.MNL_ONEDRIVE_DRIVE_ID != '' }}
+        run: |
+          python -m mnl_backup onedrive-upload \
+            --snapshot-path "${{ steps.state.outputs.path }}" \
+            --remote-path "state/current.tar.gz"

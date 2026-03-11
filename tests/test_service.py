@@ -1,5 +1,6 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import tarfile
 import unittest
 
 from mnl_backup.http import HttpResponse
@@ -97,6 +98,7 @@ class ServiceTests(unittest.TestCase):
                 summary = service.sync(max_pages=1, limit=2, delay_seconds=0)
                 self.assertEqual(summary.errors, [])
                 self.assertEqual(summary.fetched_count, 2)
+                self.assertEqual(summary.run_id, 1)
 
                 stats = service.stats()
                 self.assertEqual(stats["article_count"], 2)
@@ -105,12 +107,38 @@ class ServiceTests(unittest.TestCase):
                 html_path = Path(temp_dir) / "archive" / "2026" / "03" / "html" / "000143.html"
                 image_path = Path(temp_dir) / "archive" / "2026" / "03" / "media" / "000143" / "01.jpg"
                 manifest_path = Path(temp_dir) / "archive" / "manifests" / "articles.xml"
+                run_manifest_path = Path(temp_dir) / "archive" / "manifests" / "runs" / "run-000001.xml"
 
                 self.assertTrue(xml_path.exists())
                 self.assertTrue(html_path.exists())
                 self.assertTrue(image_path.exists())
                 self.assertTrue(manifest_path.exists())
+                self.assertTrue(run_manifest_path.exists())
                 self.assertIn("articleArchive", xml_path.read_text(encoding="utf-8"))
+                self.assertIn('changeType="created"', run_manifest_path.read_text(encoding="utf-8"))
+
+                incremental = service.create_incremental_package(
+                    run_id=summary.run_id,
+                    output_root=Path(temp_dir) / "exports",
+                )
+                self.assertTrue(incremental.package_path.exists())
+                with tarfile.open(incremental.package_path, "r:gz") as archive:
+                    names = set(archive.getnames())
+                archive_root = Path(temp_dir).name
+                self.assertIn(f"{archive_root}/archive/manifests/articles.xml", names)
+                self.assertIn(f"{archive_root}/archive/manifests/runs/run-000001.xml", names)
+                self.assertIn(f"{archive_root}/archive/2026/03/xml/000143.xml", names)
+                self.assertIn(f"{archive_root}/archive/2026/03/html/000143.html", names)
+                self.assertIn(f"{archive_root}/archive/2026/03/media/000143/01.jpg", names)
+
+                full_package = service.create_full_package(output_root=Path(temp_dir) / "exports")
+                self.assertTrue(full_package.package_path.exists())
+                with tarfile.open(full_package.package_path, "r:gz") as archive:
+                    names = set(archive.getnames())
+                self.assertIn(f"{archive_root}/db/backup.sqlite3", names)
+
+                state_snapshot = service.create_state_snapshot(output_root=Path(temp_dir) / "runtime")
+                self.assertTrue(state_snapshot.exists())
             finally:
                 service.close()
 

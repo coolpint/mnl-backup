@@ -68,11 +68,84 @@ class OneDriveClient:
         upload_url = self._create_upload_session(parent_id=parent_id, file_name=file_name)
         return self._upload_bytes(upload_url=upload_url, local_path=local_path)
 
+    def upload_to_path(self, local_path: Path, remote_path: str) -> Dict[str, object]:
+        return self.upload_file(local_path=local_path, remote_parts=_split_remote_path(remote_path))
+
+    def download_file(
+        self,
+        remote_parts: Iterable[str],
+        local_path: Path,
+        missing_ok: bool = False,
+    ) -> Optional[Path]:
+        local_path = Path(local_path)
+        item = self.resolve_item(remote_parts)
+        if item is None:
+            if missing_ok:
+                return None
+            raise OneDriveError("Remote OneDrive path does not exist")
+        if "folder" in item:
+            raise OneDriveError("Remote OneDrive path points to a folder, not a file")
+
+        item_id = item.get("id")
+        if not item_id:
+            raise OneDriveError("Resolved OneDrive item did not include an id")
+        metadata = self._graph_json(
+            "GET",
+            f"{GRAPH_BASE_URL}/drives/{quote(self.config.drive_id)}/items/{quote(str(item_id))}",
+        )
+        download_url = metadata.get("@microsoft.graph.downloadUrl")
+        if not download_url:
+            raise OneDriveError("Resolved OneDrive file did not include a download URL")
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        request = urllib.request.Request(str(download_url), method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                payload = response.read()
+        except urllib.error.HTTPError as exc:
+            raise OneDriveError(
+                f"Failed to download OneDrive file: {exc.read().decode('utf-8', 'replace')}"
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise OneDriveError(f"Failed to download OneDrive file: {exc}") from exc
+
+        local_path.write_bytes(payload)
+        return local_path
+
+    def download_from_path(
+        self,
+        remote_path: str,
+        local_path: Path,
+        missing_ok: bool = False,
+    ) -> Optional[Path]:
+        return self.download_file(
+            remote_parts=_split_remote_path(remote_path),
+            local_path=local_path,
+            missing_ok=missing_ok,
+        )
+
     def ensure_folder(self, parts: Iterable[str]) -> str:
         parent_id = self.get_approot_id()
         for part in parts:
             parent_id = self._ensure_child_folder(parent_id=parent_id, folder_name=part)
         return parent_id
+
+    def resolve_item(self, parts: Iterable[str]) -> Optional[Dict[str, object]]:
+        cleaned_parts = [part.strip("/") for part in parts if part.strip("/")]
+        if not cleaned_parts:
+            return None
+
+        parent_id = self.get_approot_id()
+        item: Optional[Dict[str, object]] = None
+        for index, part in enumerate(cleaned_parts):
+            item = self._find_child_by_name(parent_id=parent_id, name=part)
+            if item is None:
+                return None
+            if index != len(cleaned_parts) - 1:
+                if "folder" not in item:
+                    raise OneDriveError(f"Remote path segment is not a folder: {part}")
+                parent_id = str(item["id"])
+        return item
 
     def get_approot_id(self) -> str:
         payload = self._graph_json(
@@ -87,6 +160,8 @@ class OneDriveClient:
     def _ensure_child_folder(self, parent_id: str, folder_name: str) -> str:
         child = self._find_child_by_name(parent_id=parent_id, name=folder_name)
         if child:
+            if "folder" not in child:
+                raise OneDriveError(f"OneDrive item already exists and is not a folder: {folder_name}")
             return str(child["id"])
 
         payload = self._graph_json(
@@ -108,10 +183,10 @@ class OneDriveClient:
         payload = self._graph_json(
             "GET",
             f"{GRAPH_BASE_URL}/drives/{quote(self.config.drive_id)}/items/{quote(parent_id)}/children"
-            "?$select=id,name,folder",
+            "?$select=id,name,folder,file",
         )
         for item in payload.get("value", []):
-            if item.get("name") == name and "folder" in item:
+            if item.get("name") == name:
                 return item
         return None
 
@@ -266,3 +341,7 @@ def _clean_env_value(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         value = value[1:-1].strip()
     return value
+
+
+def _split_remote_path(remote_path: str) -> list[str]:
+    return [part for part in remote_path.split("/") if part.strip("/")]

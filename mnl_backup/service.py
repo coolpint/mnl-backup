@@ -7,14 +7,21 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 from .http import HttpClient
 from .models import ArticleImage, ArticleRecord, ListArticleRef
+from .packages import (
+    PackageResult,
+    create_full_package,
+    create_incremental_package,
+    create_state_snapshot as create_state_package,
+)
 from .parsers import parse_article_html, parse_list_page
+from .snapshot import restore_snapshot
 from .storage import ArchiveStore
-from .xml_export import build_article_xml, build_manifest_xml, write_bytes
+from .xml_export import build_article_xml, build_manifest_xml, build_run_manifest_xml, write_bytes
 
 
 LIST_URL_TEMPLATE = "https://www.moneynlaw.co.kr/news/articleList.html?page={page}&view_type=sm"
@@ -22,11 +29,13 @@ LIST_URL_TEMPLATE = "https://www.moneynlaw.co.kr/news/articleList.html?page={pag
 
 @dataclass
 class SyncSummary:
+    run_id: int
     mode: str
     discovered_count: int
     fetched_count: int
     updated_count: int
     manifest_path: str
+    run_manifest_path: str
     errors: List[str] = field(default_factory=list)
 
 
@@ -70,10 +79,11 @@ class BackupService:
 
         for ref in refs_to_fetch:
             try:
-                changed = self._fetch_and_store_article(ref)
+                change_type = self._fetch_and_store_article(ref)
                 fetched_count += 1
-                if changed:
+                if change_type:
                     updated_count += 1
+                    self.store.record_run_article(run_id, ref.idxno, change_type)
                 if delay_seconds:
                     time.sleep(delay_seconds)
             except Exception as exc:  # pragma: no cover - exercised by real runs
@@ -92,12 +102,15 @@ class BackupService:
             updated_count=updated_count,
             notes=notes,
         )
+        run_manifest_path = self.export_run_manifest(run_id)
         return SyncSummary(
+            run_id=run_id,
             mode=mode,
             discovered_count=len(discovered_refs),
             fetched_count=fetched_count,
             updated_count=updated_count,
             manifest_path=manifest_path,
+            run_manifest_path=run_manifest_path,
             errors=errors,
         )
 
@@ -106,6 +119,55 @@ class BackupService:
         manifest_rel = Path("archive") / "manifests" / "articles.xml"
         write_bytes(self.data_dir / manifest_rel, build_manifest_xml(rows))
         return manifest_rel.as_posix()
+
+    def export_run_manifest(self, run_id: int) -> str:
+        run_row = self.store.fetch_sync_run(run_id)
+        rows = self.store.fetch_run_manifest_rows(run_id)
+        manifest_rel = Path("archive") / "manifests" / "runs" / f"run-{run_id:06d}.xml"
+        write_bytes(self.data_dir / manifest_rel, build_run_manifest_xml(run_row, rows))
+        return manifest_rel.as_posix()
+
+    def create_incremental_package(
+        self,
+        run_id: int,
+        output_root: Path,
+        timestamp: Optional[datetime] = None,
+    ) -> PackageResult:
+        run_manifest_path = self.export_run_manifest(run_id)
+        rel_paths = self.store.fetch_run_package_paths(run_id)
+        rel_paths.extend(
+            [
+                "archive/manifests/articles.xml",
+                run_manifest_path,
+            ]
+        )
+        run_row = self.store.fetch_sync_run(run_id)
+        return create_incremental_package(
+            data_dir=self.data_dir,
+            output_root=Path(output_root),
+            run_id=run_id,
+            rel_paths=rel_paths,
+            article_count=int(run_row["updated_count"] or 0),
+            timestamp=timestamp,
+        )
+
+    def create_full_package(
+        self,
+        output_root: Path,
+        timestamp: Optional[datetime] = None,
+    ) -> PackageResult:
+        return create_full_package(
+            data_dir=self.data_dir,
+            output_root=Path(output_root),
+            timestamp=timestamp,
+            article_count=self.store.article_count(),
+        )
+
+    def create_state_snapshot(self, output_root: Path) -> Path:
+        return create_state_package(data_dir=self.data_dir, output_root=Path(output_root))
+
+    def restore_state(self, snapshot_path: Path, destination_root: Path) -> None:
+        restore_snapshot(Path(snapshot_path), Path(destination_root))
 
     def stats(self) -> Dict[str, object]:
         stats_row = self.store.fetch_stats()
@@ -186,7 +248,7 @@ class BackupService:
             raise RuntimeError(f"List page fetch failed: {page_number} ({response.status_code})")
         return parse_list_page(response.text(), page_number=page_number)
 
-    def _fetch_and_store_article(self, ref: ListArticleRef) -> bool:
+    def _fetch_and_store_article(self, ref: ListArticleRef) -> str | None:
         response = self.client.fetch(ref.url)
         if response.status_code >= 400:
             raise RuntimeError(f"Article fetch failed: HTTP {response.status_code}")
@@ -206,17 +268,20 @@ class BackupService:
         source_html_rel = period_dir / "html" / "{:06d}.html".format(article.idxno)
         write_text(self.data_dir / source_html_rel, raw_html)
 
+        existing_assets = self.store.fetch_asset_rows(article.idxno)
         article.images = self._download_images(article, period_dir, fetched_at)
         xml_rel = period_dir / "xml" / "{:06d}.xml".format(article.idxno)
         write_bytes(self.data_dir / xml_rel, build_article_xml(article, source_html_rel.as_posix()))
 
-        changed = self.store.upsert_article(
+        change_type = self.store.upsert_article(
             record=article,
             source_html_path=source_html_rel.as_posix(),
             xml_path=xml_rel.as_posix(),
         )
+        if change_type is None and asset_signature(existing_assets) != asset_signature(article.images):
+            change_type = "updated"
         self.store.replace_assets(article.idxno, article.images, downloaded_at=fetched_at)
-        return changed
+        return change_type
 
     def _download_images(
         self,
@@ -283,3 +348,39 @@ def write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
 
+
+def asset_signature(images: Iterable[ArticleImage | Dict[str, object]]) -> Tuple[Tuple[object, ...], ...]:
+    normalized = []
+    for image in images:
+        if isinstance(image, dict) or hasattr(image, "keys"):
+            normalized.append(
+                (
+                    image["ordinal"] if "ordinal" in image.keys() else None,
+                    image["role"],
+                    image["source_url"],
+                    image["local_path"],
+                    image["mime_type"],
+                    image["width"],
+                    image["height"],
+                    image["alt_text"],
+                    image["caption"],
+                    image["sha256"],
+                )
+            )
+            continue
+
+        normalized.append(
+            (
+                None,
+                image.role,
+                image.source_url,
+                image.local_path,
+                image.mime_type,
+                image.width,
+                image.height,
+                image.alt_text,
+                image.caption,
+                image.sha256,
+            )
+        )
+    return tuple(normalized)

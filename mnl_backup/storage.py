@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List
 
 from .models import ArticleImage, ArticleRecord
 
@@ -78,6 +78,16 @@ class ArchiveStore:
                 updated_count INTEGER NOT NULL DEFAULT 0,
                 notes TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS sync_run_articles (
+                sync_run_id INTEGER NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
+                article_idxno INTEGER NOT NULL REFERENCES articles(idxno) ON DELETE CASCADE,
+                change_type TEXT NOT NULL,
+                PRIMARY KEY (sync_run_id, article_idxno)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sync_run_articles_article
+            ON sync_run_articles(article_idxno);
             """
         )
         self._conn.commit()
@@ -129,7 +139,7 @@ class ArchiveStore:
         record: ArticleRecord,
         source_html_path: str,
         xml_path: str,
-    ) -> bool:
+    ) -> str | None:
         existing = self._conn.execute(
             "SELECT first_seen_at, html_sha256, body_sha256, updated_at FROM articles WHERE idxno = ?",
             (record.idxno,),
@@ -207,7 +217,23 @@ class ArchiveStore:
             ),
         )
         self._conn.commit()
-        return changed
+        if existing is None:
+            return "created"
+        if changed:
+            return "updated"
+        return None
+
+    def record_run_article(self, run_id: int, article_idxno: int, change_type: str) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO sync_run_articles (sync_run_id, article_idxno, change_type)
+            VALUES (?, ?, ?)
+            ON CONFLICT(sync_run_id, article_idxno) DO UPDATE SET
+                change_type = excluded.change_type
+            """,
+            (run_id, article_idxno, change_type),
+        )
+        self._conn.commit()
 
     def replace_assets(self, article_idxno: int, images: List[ArticleImage], downloaded_at: str) -> None:
         self._conn.execute("DELETE FROM article_assets WHERE article_idxno = ?", (article_idxno,))
@@ -233,8 +259,21 @@ class ArchiveStore:
                     image.sha256,
                     downloaded_at,
                 ),
-            )
+        )
         self._conn.commit()
+
+    def fetch_asset_rows(self, article_idxno: int) -> List[sqlite3.Row]:
+        return self._conn.execute(
+            """
+            SELECT
+                ordinal, role, source_url, local_path, mime_type, width, height,
+                alt_text, caption, sha256
+            FROM article_assets
+            WHERE article_idxno = ?
+            ORDER BY ordinal
+            """,
+            (article_idxno,),
+        ).fetchall()
 
     def fetch_manifest_rows(self) -> List[sqlite3.Row]:
         return self._conn.execute(
@@ -247,6 +286,75 @@ class ArchiveStore:
             ORDER BY COALESCE(published_at, '') DESC, idxno DESC
             """
         ).fetchall()
+
+    def fetch_sync_run(self, run_id: int) -> sqlite3.Row:
+        row = self._conn.execute(
+            """
+            SELECT
+                id, mode, started_at, finished_at, discovered_count,
+                fetched_count, updated_count, notes
+            FROM sync_runs
+            WHERE id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown sync run: {run_id}")
+        return row
+
+    def fetch_run_manifest_rows(self, run_id: int) -> List[sqlite3.Row]:
+        return self._conn.execute(
+            """
+            SELECT
+                sra.change_type,
+                a.idxno,
+                a.canonical_url,
+                a.headline,
+                a.section_name,
+                a.subsection_name,
+                a.author_name,
+                a.published_at,
+                a.updated_at,
+                a.xml_path,
+                a.source_html_path,
+                a.fetched_at,
+                a.first_seen_at,
+                a.last_seen_at,
+                a.html_sha256,
+                a.body_sha256
+            FROM sync_run_articles AS sra
+            JOIN articles AS a
+                ON a.idxno = sra.article_idxno
+            WHERE sra.sync_run_id = ?
+            ORDER BY COALESCE(a.published_at, '') DESC, a.idxno DESC
+            """,
+            (run_id,),
+        ).fetchall()
+
+    def fetch_run_package_paths(self, run_id: int) -> List[str]:
+        rows = self._conn.execute(
+            """
+            SELECT a.xml_path AS path
+            FROM sync_run_articles AS sra
+            JOIN articles AS a
+                ON a.idxno = sra.article_idxno
+            WHERE sra.sync_run_id = ?
+            UNION
+            SELECT a.source_html_path AS path
+            FROM sync_run_articles AS sra
+            JOIN articles AS a
+                ON a.idxno = sra.article_idxno
+            WHERE sra.sync_run_id = ?
+            UNION
+            SELECT aa.local_path AS path
+            FROM sync_run_articles AS sra
+            JOIN article_assets AS aa
+                ON aa.article_idxno = sra.article_idxno
+            WHERE sra.sync_run_id = ?
+            """,
+            (run_id, run_id, run_id),
+        ).fetchall()
+        return [row["path"] for row in rows if row["path"]]
 
     def fetch_stats(self) -> sqlite3.Row:
         return self._conn.execute(
@@ -269,4 +377,3 @@ class ArchiveStore:
             """,
             (limit,),
         ).fetchall()
-

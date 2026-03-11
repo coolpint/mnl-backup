@@ -1,20 +1,21 @@
 # Remote Setup Checklist
 
-이 문서는 `mnl_backup`를 로컬 Mac 전원과 무관하게 GitHub Actions에서 실행하고,
-스냅샷을 Microsoft 365(OneDrive/SharePoint)로 업로드하기 위한 준비 항목을 정리한다.
+이 문서는 `mnl_backup`를 로컬 Mac 전원과 무관하게 GitHub Actions에서 실행하고, 결과를 Microsoft 365(SharePoint/OneDrive)로 누적 보관하기 위한 준비 항목을 정리한다.
 
-## 현재 상태
+## 현재 구조
 
 - GitHub 원격 저장소: `git@github.com:coolpint/mnl-backup.git`
 - 기본 브랜치: `main`
-- 원격 워크플로: `.github/workflows/mnl-backup.yml`
-- 기본 실행 시간: 매일 `06:17 KST`
+- 일간 증분 워크플로: `.github/workflows/mnl-backup-daily.yml`
+- 월간 전체 워크플로: `.github/workflows/mnl-backup-monthly.yml`
+- 일간 증분 실행 시간: 매일 `06:17 KST`
+- 월간 전체 실행 시간: 매월 1일 `10:47 KST`
 
 ## 1. GitHub에서 확인할 것
 
 - 저장소 `Actions`가 활성화되어 있어야 한다.
 - 기본 브랜치가 `main`이어야 한다.
-- 필요하면 워크플로를 수동 실행해 1회 테스트한다.
+- 필요하면 두 워크플로를 각각 수동 실행해 1회 테스트한다.
 
 ## 2. Microsoft 365 쪽 권장 구조
 
@@ -27,7 +28,10 @@
 
 - 사이트 이름: `MNL Backup`
 - 라이브러리: `Documents`
-- 업로드 대상 폴더: 앱 전용 `AppRoot/snapshots`
+- 실제 업로드 위치:
+  - `Apps/mnl-backup-prod/backups/incremental/...`
+  - `Apps/mnl-backup-prod/backups/full/...`
+  - `Apps/mnl-backup-prod/state/current.tar.gz`
 
 ## 3. Entra 앱 등록에서 준비할 값
 
@@ -67,23 +71,40 @@ SharePoint 문서 라이브러리를 쓸 경우:
 
 ## 6. 워크플로 동작 순서
 
-매일 실행 시 아래 순서로 진행된다.
+### 일간 증분
 
-1. `python -m mnl_backup --data-dir data sync --full --delay 0.5`
-2. `python -m mnl_backup --data-dir data snapshot --output-dir exports`
-3. GitHub Actions artifact 업로드
-4. OneDrive 업로드
+1. OneDrive `state/current.tar.gz` 다운로드
+2. 로컬 `data/` 복원
+3. `python -m mnl_backup --data-dir data sync`
+4. `python -m mnl_backup --data-dir data package-incremental --run-id ...`
+5. GitHub artifact 업로드
+6. OneDrive `backups/incremental/YYYY/MM/DD/...tar.gz` 업로드
+7. 새 `state/current.tar.gz` 생성 및 덮어쓰기
+
+### 월간 전체
+
+1. OneDrive `state/current.tar.gz` 다운로드
+2. 로컬 `data/` 복원
+3. `python -m mnl_backup --data-dir data sync`
+4. `python -m mnl_backup --data-dir data package-full`
+5. GitHub artifact 업로드
+6. OneDrive `backups/full/YYYY/MM/...tar.gz` 업로드
+7. 새 `state/current.tar.gz` 생성 및 덮어쓰기
 
 ## 7. 운영 중 바꾸기 쉬운 값
 
-- 실행 시간: `.github/workflows/mnl-backup.yml`
-- OneDrive 하위 폴더명: `onedrive-upload --remote-dir snapshots`
-- artifact 보관일: `retention-days`
+- 일간 실행 시간: `.github/workflows/mnl-backup-daily.yml`
+- 월간 실행 시간: `.github/workflows/mnl-backup-monthly.yml`
+- OneDrive 하위 경로:
+  - 증분: `backups/incremental/...`
+  - 전체: `backups/full/...`
+  - 상태: `state/current.tar.gz`
+- artifact 보관일: 각 워크플로의 `retention-days`
 
 ## 8. 첫 운영 점검 포인트
 
-- Actions 첫 실행이 성공하는지
-- artifact가 생성되는지
-- OneDrive/SharePoint에 tar.gz가 올라가는지
-- 업로드 파일명이 날짜별로 누적되는지
-- 다음 날 동일한 스케줄로 다시 실행되는지
+- 일간 증분 실행이 성공하는지
+- 월간 전체 실행이 성공하는지
+- SharePoint 문서 라이브러리에서 `Apps/<앱명>/backups/incremental` 경로가 생기는지
+- SharePoint 문서 라이브러리에서 `Apps/<앱명>/backups/full` 경로가 생기는지
+- `Apps/<앱명>/state/current.tar.gz`가 매 실행 후 갱신되는지

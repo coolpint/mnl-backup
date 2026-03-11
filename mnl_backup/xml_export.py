@@ -97,6 +97,45 @@ def build_manifest_xml(rows: Iterable) -> bytes:
     return doc.toprettyxml(indent="  ", encoding="utf-8")
 
 
+def build_run_manifest_xml(run_row, rows: Iterable) -> bytes:
+    doc = Document()
+    root = doc.createElement("articleArchiveRun")
+    root.setAttribute("version", "1")
+    root.setAttribute("runId", str(run_row["id"]))
+    root.setAttribute("mode", run_row["mode"] or "")
+    doc.appendChild(root)
+
+    summary = append_element(doc, root, "summary")
+    append_text(doc, summary, "startedAt", run_row["started_at"] or "")
+    append_text(doc, summary, "finishedAt", run_row["finished_at"] or "")
+    append_text(doc, summary, "discoveredCount", str(run_row["discovered_count"] or 0))
+    append_text(doc, summary, "fetchedCount", str(run_row["fetched_count"] or 0))
+    append_text(doc, summary, "updatedCount", str(run_row["updated_count"] or 0))
+    append_text(doc, summary, "notes", run_row["notes"] or "")
+
+    changes = append_element(doc, root, "changes")
+    for row in rows:
+        article = append_element(doc, changes, "article")
+        article.setAttribute("idxno", str(row["idxno"]))
+        article.setAttribute("changeType", row["change_type"] or "")
+        append_text(doc, article, "headline", row["headline"])
+        append_text(doc, article, "canonicalUrl", row["canonical_url"])
+        append_text(doc, article, "section", row["section_name"] or "")
+        append_text(doc, article, "subsection", row["subsection_name"] or "")
+        append_text(doc, article, "authorName", row["author_name"] or "")
+        append_text(doc, article, "publishedAt", row["published_at"] or "")
+        append_text(doc, article, "updatedAt", row["updated_at"] or "")
+        append_text(doc, article, "xmlPath", row["xml_path"])
+        append_text(doc, article, "sourceHtmlPath", row["source_html_path"])
+        append_text(doc, article, "fetchedAt", row["fetched_at"] or "")
+        append_text(doc, article, "firstSeenAt", row["first_seen_at"] or "")
+        append_text(doc, article, "lastSeenAt", row["last_seen_at"] or "")
+        append_text(doc, article, "htmlSha256", row["html_sha256"] or "")
+        append_text(doc, article, "bodySha256", row["body_sha256"] or "")
+
+    return doc.toprettyxml(indent="  ", encoding="utf-8")
+
+
 def write_bytes(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
