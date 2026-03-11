@@ -3,6 +3,7 @@ from tempfile import TemporaryDirectory
 import tarfile
 import unittest
 
+from mnl_backup.onedrive import _clean_env_value
 from mnl_backup.snapshot import create_snapshot
 
 
@@ -21,6 +22,10 @@ class SnapshotTests(unittest.TestCase):
             with tarfile.open(snapshot_path, "r:gz") as archive:
                 names = archive.getnames()
             self.assertIn("data/archive/sample.txt", names)
+
+    def test_clean_env_value_strips_wrapping_quotes_and_whitespace(self) -> None:
+        self.assertEqual(_clean_env_value('  "b!abc123"  '), "b!abc123")
+        self.assertEqual(_clean_env_value("  'tenant-id' "), "tenant-id")
 
 
 if __name__ == "__main__":

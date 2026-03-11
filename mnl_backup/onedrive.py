@@ -28,10 +28,10 @@ class OneDriveConfig:
 
     @classmethod
     def from_env(cls) -> "OneDriveConfig":
-        tenant_id = os.environ.get("MNL_ONEDRIVE_TENANT_ID", "").strip()
-        client_id = os.environ.get("MNL_ONEDRIVE_CLIENT_ID", "").strip()
-        client_secret = os.environ.get("MNL_ONEDRIVE_CLIENT_SECRET", "").strip()
-        drive_id = os.environ.get("MNL_ONEDRIVE_DRIVE_ID", "").strip()
+        tenant_id = _clean_env_value(os.environ.get("MNL_ONEDRIVE_TENANT_ID", ""))
+        client_id = _clean_env_value(os.environ.get("MNL_ONEDRIVE_CLIENT_ID", ""))
+        client_secret = _clean_env_value(os.environ.get("MNL_ONEDRIVE_CLIENT_SECRET", ""))
+        drive_id = _clean_env_value(os.environ.get("MNL_ONEDRIVE_DRIVE_ID", ""))
         missing = [
             name
             for name, value in (
@@ -202,8 +202,19 @@ class OneDriveClient:
             status_code = exc.code
             payload = exc.read()
             if status_code not in expected_status:
+                guidance = ""
+                payload_text = payload.decode("utf-8", "replace")
+                if (
+                    status_code == 400
+                    and "/special/approot" in url
+                    and "drive id" in payload_text.lower()
+                ):
+                    guidance = (
+                        " Check MNL_ONEDRIVE_DRIVE_ID. It must be the raw drive 'id' value from "
+                        "SharePoint/Graph, pasted without quotes, commas, or extra spaces."
+                    )
                 raise OneDriveError(
-                    f"OneDrive request failed ({status_code}) for {method} {url}: {payload.decode('utf-8', 'replace')}"
+                    f"OneDrive request failed ({status_code}) for {method} {url}: {payload_text}{guidance}"
                 ) from exc
         except urllib.error.URLError as exc:
             raise OneDriveError(f"OneDrive request failed for {method} {url}: {exc}") from exc
@@ -248,3 +259,10 @@ class OneDriveClient:
             raise OneDriveError("Token response did not include access_token")
         self._access_token = str(token)
         return self._access_token
+
+
+def _clean_env_value(value: str) -> str:
+    value = (value or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1].strip()
+    return value
