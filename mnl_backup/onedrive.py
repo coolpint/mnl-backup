@@ -71,6 +71,31 @@ class OneDriveClient:
     def upload_to_path(self, local_path: Path, remote_path: str) -> Dict[str, object]:
         return self.upload_file(local_path=local_path, remote_parts=_split_remote_path(remote_path))
 
+    def upload_directory(self, local_dir: Path, remote_parts: Iterable[str]) -> Dict[str, object]:
+        local_dir = Path(local_dir)
+        if not local_dir.exists() or not local_dir.is_dir():
+            raise OneDriveError(f"Local directory does not exist: {local_dir}")
+
+        cleaned_remote_parts = [part.strip("/") for part in remote_parts if part.strip("/")]
+        if not cleaned_remote_parts:
+            raise OneDriveError("remote_parts must contain at least one folder name")
+
+        uploaded = []
+        for path in sorted(local_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            rel_parts = path.relative_to(local_dir).parts
+            self.upload_file(path, [*cleaned_remote_parts, *rel_parts])
+            uploaded.append("/".join([*cleaned_remote_parts, *rel_parts]))
+
+        return {
+            "remote_dir": "/".join(cleaned_remote_parts),
+            "file_count": len(uploaded),
+        }
+
+    def upload_directory_to_path(self, local_dir: Path, remote_path: str) -> Dict[str, object]:
+        return self.upload_directory(local_dir=local_dir, remote_parts=_split_remote_path(remote_path))
+
     def download_file(
         self,
         remote_parts: Iterable[str],

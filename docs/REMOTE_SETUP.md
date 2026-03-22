@@ -32,6 +32,9 @@
   - `Apps/mnl-backup-prod/backups/incremental/...`
   - `Apps/mnl-backup-prod/backups/full/...`
   - `Apps/mnl-backup-prod/state/current.tar.gz`
+  - `Apps/mnl-backup-prod/social/inbox/...`
+  - `Apps/mnl-backup-prod/social/notifications/...`
+  - `Apps/mnl-backup-prod/social/status/...` (publisher가 기록)
 
 ## 3. Entra 앱 등록에서 준비할 값
 
@@ -80,6 +83,9 @@ SharePoint 문서 라이브러리를 쓸 경우:
 5. GitHub artifact 업로드
 6. OneDrive `backups/incremental/YYYY/MM/DD/...tar.gz` 업로드
 7. 새 `state/current.tar.gz` 생성 및 덮어쓰기
+ 8. `python -m mnl_backup --data-dir data social-export --run-id ...`
+ 9. OneDrive `social/inbox/YYYY/MM/DD/run-xxxxxx/...` 업로드
+ 10. OneDrive `social/notifications/YYYY/MM/DD/run-xxxxxx.json` 및 `social/notifications/latest.json` 업로드
 
 ### 월간 전체
 
@@ -99,6 +105,9 @@ SharePoint 문서 라이브러리를 쓸 경우:
   - 증분: `backups/incremental/...`
   - 전체: `backups/full/...`
   - 상태: `state/current.tar.gz`
+  - social inbox: `social/inbox/...`
+  - social notifications: `social/notifications/...`
+  - social status: `social/status/...` (publisher 소유 경로)
 - artifact 보관일: 각 워크플로의 `retention-days`
 
 ## 8. 첫 운영 점검 포인트

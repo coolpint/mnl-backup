@@ -107,3 +107,15 @@ jobs:
           python -m mnl_backup onedrive-upload \
             --snapshot-path "${{ steps.state.outputs.path }}" \
             --remote-path "state/current.tar.gz"
+
+      - name: Write remote storage summary
+        run: |
+          {
+            echo "## Remote Archive Summary"
+            echo
+            echo "- Canonical runner state: \`Apps/mnl-backup-prod/state/current.tar.gz\`"
+            echo "- Monthly full archives: \`Apps/mnl-backup-prod/backups/full/YYYY/MM/\`"
+            echo "- This run full path: \`Apps/mnl-backup-prod/backups/${{ steps.package.outputs.remote_dir }}/${{ steps.package.outputs.name }}\`"
+            echo
+            echo "Local runner files are ephemeral. SharePoint/OneDrive is the long-term archive."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -39,6 +39,14 @@ def main(argv: Optional[list] = None) -> int:
             )
         return emit_output(args, result)
 
+    if args.command == "onedrive-upload-tree":
+        client = OneDriveClient(OneDriveConfig.from_env())
+        result = client.upload_directory_to_path(
+            local_dir=Path(args.local_dir),
+            remote_path=args.remote_path,
+        )
+        return emit_output(args, result)
+
     if args.command == "onedrive-download":
         client = OneDriveClient(OneDriveConfig.from_env())
         downloaded = client.download_from_path(
@@ -93,6 +101,13 @@ def main(argv: Optional[list] = None) -> int:
         if args.command == "state-snapshot":
             snapshot_path = service.create_state_snapshot(output_root=Path(args.output_dir))
             return emit_output(args, {"snapshot_path": str(snapshot_path)})
+
+        if args.command == "social-export":
+            result = service.export_social_packages(
+                run_id=args.run_id,
+                output_root=Path(args.output_dir),
+            )
+            return emit_output(args, result)
 
         stats = service.stats()
         return emit_output(args, stats)
@@ -176,6 +191,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="상태 스냅샷을 저장할 디렉터리 루트",
     )
 
+    social_export_parser = subparsers.add_parser(
+        "social-export",
+        help="특정 sync run의 변경 기사들로 social source package를 생성합니다",
+    )
+    social_export_parser.add_argument("--run-id", type=int, required=True, help="social package를 만들 sync run ID")
+    social_export_parser.add_argument(
+        "--output-dir",
+        default="exports/social",
+        help="social package 배치를 저장할 디렉터리 루트",
+    )
+
     restore_parser = subparsers.add_parser(
         "restore",
         help="tar.gz 스냅샷을 지정한 루트 디렉터리에 복원합니다",
@@ -221,6 +247,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--missing-ok",
         action="store_true",
         help="원격 파일이 없으면 실패하지 않고 found=false를 반환합니다",
+    )
+
+    onedrive_upload_tree_parser = subparsers.add_parser(
+        "onedrive-upload-tree",
+        help="로컬 디렉터리 트리를 OneDrive app folder 하위로 업로드합니다",
+    )
+    onedrive_upload_tree_parser.add_argument(
+        "--local-dir",
+        required=True,
+        help="업로드할 로컬 디렉터리 경로",
+    )
+    onedrive_upload_tree_parser.add_argument(
+        "--remote-path",
+        required=True,
+        help="OneDrive app folder 기준 업로드할 폴더 경로",
     )
     return parser
 

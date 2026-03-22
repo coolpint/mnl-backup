@@ -13,6 +13,9 @@
   - `incremental/` 패키지 생성
   - `full/` 패키지 생성
   - 원격 런너 상태 스냅샷 생성
+- `mnl_backup/social_export.py`
+  - sync run 기준 social source package 생성
+  - 기사별 self-contained package 작성
 - `mnl_backup/snapshot.py`
   - tar.gz 생성
   - 안전한 복원
@@ -57,5 +60,12 @@ GitHub Actions 런너가 다음 실행 때 이어받기 위한 운영 상태다.
 - `exporters/daum.py`
 - `exporters/wordpress.py`
 - `exporters/custom_cms.py`
+- `exporters/social.py`
 
 이 계층은 스크래퍼를 직접 읽지 않고, 반드시 canonical archive의 XML/DB를 읽도록 유지하는 것이 맞다. 그렇게 해야 수집 로직과 전송 로직이 분리되고, 포털 전송 스키마가 바뀌어도 exporter만 수정하면 된다.
+
+social 쪽도 같은 원칙을 따른다.
+
+- `mnl-backup`: social source package 생성
+- 별도 publisher repo: YouTube/Instagram/Facebook/Threads별 builder + publisher
+- 연결 방식: 코드 import가 아니라 package contract

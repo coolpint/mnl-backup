@@ -63,6 +63,12 @@ python3 -m mnl_backup sync
 python3 -m mnl_backup --json package-incremental --run-id 123 --output-dir exports
 ```
 
+특정 실행의 변경 기사로 social source package 생성:
+
+```bash
+python3 -m mnl_backup --json social-export --run-id 123 --output-dir exports/social
+```
+
 월간 전체 패키지 생성:
 
 ```bash
@@ -106,20 +112,33 @@ python3 -m mnl_backup onedrive-download \
 
 - 수집과 보관을 분리한다.
   - `service.py`: 기사 수집과 정규화 저장
-  - `packages.py`: 일간 증분/월간 전체 패키징
-  - `snapshot.py`: tar.gz 생성과 복원
-  - `onedrive.py`: SharePoint/OneDrive 전송
+- `packages.py`: 일간 증분/월간 전체 패키징
+- `snapshot.py`: tar.gz 생성과 복원
+- `onedrive.py`: SharePoint/OneDrive 전송
+- `social_export.py`: 기사별 social source package 생성
 - 정규화 XML을 기준 저장 포맷으로 유지한다.
   - 기사별 XML
   - 전체 manifest XML
   - 실행별 run manifest XML
 - 나중에 CMS export나 포털 전송은 이 정규화 저장소를 읽는 별도 어댑터 계층으로 붙인다.
 
+## Social Exporter
+
+social exporter는 canonical archive를 읽어, 별도 게시 시스템이 소비할 self-contained package를 만든다.
+
+- 입력: `sync run`, 기사 XML, 원본 HTML, 이미지, SQLite 메타
+- 출력: 기사별 `package.json`, `article.json`, `rights.json`, `body.txt`, 복사된 원본 파일
+- 역할: 공통 소스 패키지 생성만 담당
+- 비역할: 유튜브/인스타/페북/스레드별 최종 콘텐츠 생성, 업로드, 재시도
+
+즉 이 리포는 source-of-truth와 exporter까지만 담당하고, 게시 앱은 별도 repo에서 package contract만 읽는 구조를 권장한다. 상세 규격은 [docs/SOCIAL_EXPORTER.md](/Users/air/codes/mnl-backup/docs/SOCIAL_EXPORTER.md)를 본다.
+publisher 상태 기록 규격은 [docs/SOCIAL_STATUS.md](/Users/air/codes/mnl-backup/docs/SOCIAL_STATUS.md)를 본다.
+
 ## 원격 실행
 
 - 일간 증분 워크플로: [.github/workflows/mnl-backup-daily.yml](/Users/air/codes/mnl-backup/.github/workflows/mnl-backup-daily.yml)
   - 매일 `06:17 KST`
-  - `state 복원 -> sync -> 증분 패키지 -> OneDrive 업로드 -> state 갱신`
+  - `state 복원 -> sync -> 증분 패키지 -> OneDrive 업로드 -> state 갱신 -> social export -> social inbox/notification 업로드`
 - 월간 전체 워크플로: [.github/workflows/mnl-backup-monthly.yml](/Users/air/codes/mnl-backup/.github/workflows/mnl-backup-monthly.yml)
   - 매월 1일 `10:47 KST`
   - `state 복원 -> sync -> 전체 패키지 -> OneDrive 업로드 -> state 갱신`

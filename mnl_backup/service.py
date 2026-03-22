@@ -19,6 +19,7 @@ from .packages import (
     create_state_snapshot as create_state_package,
 )
 from .parsers import parse_article_html, parse_list_page
+from .social_export import SocialExportResult, create_social_export_batch
 from .snapshot import restore_snapshot
 from .storage import ArchiveStore
 from .xml_export import build_article_xml, build_manifest_xml, build_run_manifest_xml, write_bytes
@@ -165,6 +166,72 @@ class BackupService:
 
     def create_state_snapshot(self, output_root: Path) -> Path:
         return create_state_package(data_dir=self.data_dir, output_root=Path(output_root))
+
+    def export_social_packages(
+        self,
+        run_id: int,
+        output_root: Path,
+        timestamp: Optional[datetime] = None,
+    ) -> SocialExportResult:
+        run_row = self.store.fetch_sync_run(run_id)
+        run_articles = self.store.fetch_run_manifest_rows(run_id)
+        article_payloads = []
+        for row in run_articles:
+            article_row = self.store.fetch_article_row(int(row["idxno"]))
+            asset_rows = self.store.fetch_asset_rows(int(row["idxno"]))
+            article_payloads.append(
+                {
+                    "idxno": int(article_row["idxno"]),
+                    "source_url": article_row["source_url"],
+                    "canonical_url": article_row["canonical_url"],
+                    "site_name": article_row["site_name"],
+                    "language": article_row["language"],
+                    "headline": article_row["headline"],
+                    "browser_title": article_row["browser_title"] or "",
+                    "summary": article_row["summary"] or "",
+                    "section_name": article_row["section_name"] or "",
+                    "subsection_name": article_row["subsection_name"] or "",
+                    "author_name": article_row["author_name"] or "",
+                    "author_email": article_row["author_email"] or "",
+                    "author_profile_url": article_row["author_profile_url"] or "",
+                    "published_at": article_row["published_at"] or "",
+                    "updated_at": article_row["updated_at"] or "",
+                    "status": article_row["status"] or "",
+                    "body_html": article_row["body_html"] or "",
+                    "body_text": article_row["body_text"] or "",
+                    "source_html_path": article_row["source_html_path"],
+                    "xml_path": article_row["xml_path"],
+                    "html_sha256": article_row["html_sha256"] or "",
+                    "body_sha256": article_row["body_sha256"] or "",
+                    "first_seen_at": article_row["first_seen_at"] or "",
+                    "last_seen_at": article_row["last_seen_at"] or "",
+                    "fetched_at": article_row["fetched_at"] or "",
+                    "copyright_notice": article_row["copyright_notice"] or "",
+                    "change_type": row["change_type"] or "",
+                    "assets": [
+                        {
+                            "ordinal": int(asset["ordinal"]),
+                            "role": asset["role"],
+                            "source_url": asset["source_url"],
+                            "local_path": asset["local_path"],
+                            "mime_type": asset["mime_type"] or "",
+                            "width": asset["width"],
+                            "height": asset["height"],
+                            "alt_text": asset["alt_text"] or "",
+                            "caption": asset["caption"] or "",
+                            "sha256": asset["sha256"] or "",
+                        }
+                        for asset in asset_rows
+                    ],
+                }
+            )
+        return create_social_export_batch(
+            data_dir=self.data_dir,
+            output_root=Path(output_root),
+            run_row=run_row,
+            article_payloads=article_payloads,
+            timestamp=timestamp,
+        )
 
     def restore_state(self, snapshot_path: Path, destination_root: Path) -> None:
         restore_snapshot(Path(snapshot_path), Path(destination_root))

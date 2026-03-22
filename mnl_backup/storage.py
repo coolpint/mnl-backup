@@ -287,6 +287,24 @@ class ArchiveStore:
             """
         ).fetchall()
 
+    def fetch_article_row(self, article_idxno: int) -> sqlite3.Row:
+        row = self._conn.execute(
+            """
+            SELECT
+                idxno, source_url, canonical_url, site_name, language, headline,
+                browser_title, summary, section_name, subsection_name, author_name,
+                author_email, author_profile_url, published_at, updated_at, status,
+                body_html, body_text, source_html_path, xml_path, html_sha256,
+                body_sha256, first_seen_at, last_seen_at, fetched_at, copyright_notice
+            FROM articles
+            WHERE idxno = ?
+            """,
+            (article_idxno,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Unknown article: {article_idxno}")
+        return row
+
     def fetch_sync_run(self, run_id: int) -> sqlite3.Row:
         row = self._conn.execute(
             """
