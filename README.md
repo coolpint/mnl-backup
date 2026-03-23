@@ -69,6 +69,15 @@ python3 -m mnl_backup --json package-incremental --run-id 123 --output-dir expor
 python3 -m mnl_backup --json social-export --run-id 123 --output-dir exports/social
 ```
 
+테스트용으로 최근 기사 N건을 강제로 social export:
+
+```bash
+python3 -m mnl_backup --json social-export \
+  --run-id 123 \
+  --output-dir exports/social \
+  --fallback-recent-limit 3
+```
+
 월간 전체 패키지 생성:
 
 ```bash
@@ -139,6 +148,7 @@ publisher 상태 기록 규격은 [docs/SOCIAL_STATUS.md](/Users/air/codes/mnl-b
 - 일간 증분 워크플로: [.github/workflows/mnl-backup-daily.yml](/Users/air/codes/mnl-backup/.github/workflows/mnl-backup-daily.yml)
   - 매일 `06:17 KST`
   - `state 복원 -> sync -> 증분 패키지 -> OneDrive 업로드 -> state 갱신 -> social export -> social inbox/notification 업로드`
+  - 수동 실행 때 `social_export_recent_limit`을 1 이상으로 주면, 변경 기사가 없는 날에도 최근 기사 N건으로 테스트용 social export를 만들 수 있다
 - 월간 전체 워크플로: [.github/workflows/mnl-backup-monthly.yml](/Users/air/codes/mnl-backup/.github/workflows/mnl-backup-monthly.yml)
   - 매월 1일 `10:47 KST`
   - `state 복원 -> sync -> 전체 패키지 -> OneDrive 업로드 -> state 갱신`

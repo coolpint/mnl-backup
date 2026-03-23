@@ -106,6 +106,7 @@ def main(argv: Optional[list] = None) -> int:
             result = service.export_social_packages(
                 run_id=args.run_id,
                 output_root=Path(args.output_dir),
+                fallback_recent_limit=args.fallback_recent_limit,
             )
             return emit_output(args, result)
 
@@ -200,6 +201,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         default="exports/social",
         help="social package 배치를 저장할 디렉터리 루트",
+    )
+    social_export_parser.add_argument(
+        "--fallback-recent-limit",
+        type=int,
+        default=0,
+        help="run에 변경 기사가 없을 때 테스트용으로 최근 기사 N건을 backfill export합니다",
     )
 
     restore_parser = subparsers.add_parser(

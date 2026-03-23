@@ -67,6 +67,8 @@ class SocialExportResult:
     batch_manifest_path: Path
     notification_path: Path
     article_count: int
+    selection_mode: str = "run_articles"
+    requested_fallback_recent_limit: int = 0
     packages: List[SocialPackageResult] = field(default_factory=list)
 
 

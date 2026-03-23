@@ -36,6 +36,19 @@ python3 -m mnl_backup --json social-export \
   --output-dir exports/social
 ```
 
+변경 기사가 없는 run에서도 테스트용 backfill export를 만들 수 있다.
+
+```bash
+python3 -m mnl_backup --json social-export \
+  --run-id 123 \
+  --output-dir exports/social \
+  --fallback-recent-limit 3
+```
+
+- 기본값은 `0`
+- `0`보다 크면 run에 변경 기사가 없을 때 최근 기사 N건을 `backfill_recent` 변경 유형으로 export한다
+- 운영 자동 스케줄보다 `workflow_dispatch` 테스트나 UI/E2E 점검용으로 쓰는 것을 권장한다
+
 ## 출력 구조
 
 ```text

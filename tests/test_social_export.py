@@ -4,7 +4,7 @@ import json
 import unittest
 
 from mnl_backup.http import HttpResponse
-from mnl_backup.service import BackupService
+from mnl_backup.service import BackupService, utc_now
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -149,6 +149,100 @@ class SocialExportTests(unittest.TestCase):
                 package_94 = json.loads((package_dir_94 / "package.json").read_text(encoding="utf-8"))
                 self.assertEqual(package_94["assets"]["count"], 0)
                 self.assertEqual(package_94["files"]["article_json"], "article.json")
+            finally:
+                service.close()
+
+    def test_social_export_can_backfill_recent_articles_when_run_has_no_updates(self) -> None:
+        synthetic_list = """
+        <div id="sections" class="altlist">
+          <header class="altlist-header">
+            <H1 class="altlist-title">전체기사 <small class="altlist-count">총 <strong>2</strong>건의 기사가 있습니다.</small></H1>
+          </header>
+          <article id="section-list" class="altlist-body">
+            <ul class="altlist-webzine">
+              <li class="altlist-webzine-item">
+                <div class="altlist-webzine-content">
+                  <H2 class="altlist-subject"><a href="https://www.moneynlaw.co.kr/news/articleView.html?idxno=143">기사 143</a></H2>
+                  <div class="altlist-info">
+                    <div class="altlist-info-item">경제</div>
+                    <div class="altlist-info-item">머니앤로</div>
+                    <div class="altlist-info-item">03-07 16:50</div>
+                  </div>
+                </div>
+              </li>
+              <li class="altlist-webzine-item">
+                <div class="altlist-webzine-content">
+                  <H2 class="altlist-subject"><a href="https://www.moneynlaw.co.kr/news/articleView.html?idxno=94">기사 94</a></H2>
+                  <div class="altlist-info">
+                    <div class="altlist-info-item">사회</div>
+                    <div class="altlist-info-item">머니앤로</div>
+                    <div class="altlist-info-item">02-22 07:47</div>
+                  </div>
+                </div>
+              </li>
+            </ul>
+            <script>
+            params['list_per_page'] = "20";
+            </script>
+          </article>
+        </div>
+        """
+        article_143 = (FIXTURE_DIR / "article_143.html").read_bytes()
+        article_94 = (FIXTURE_DIR / "article_94.html").read_bytes()
+        image_bytes = b"\xff\xd8\xff\xdbfakejpeg"
+
+        responses = {
+            "https://www.moneynlaw.co.kr/news/articleList.html?page=1&view_type=sm": (
+                200,
+                {"content-type": "text/html; charset=utf-8"},
+                synthetic_list.encode("utf-8"),
+            ),
+            "https://www.moneynlaw.co.kr/news/articleView.html?idxno=143": (
+                200,
+                {"content-type": "text/html; charset=utf-8"},
+                article_143,
+            ),
+            "https://www.moneynlaw.co.kr/news/articleView.html?idxno=94": (
+                200,
+                {"content-type": "text/html; charset=utf-8"},
+                article_94,
+            ),
+            "https://cdn.moneynlaw.co.kr/news/photo/202603/143_106_2019.jpg": (
+                200,
+                {"content-type": "image/jpeg"},
+                image_bytes,
+            ),
+        }
+
+        with TemporaryDirectory() as temp_dir:
+            service = BackupService(Path(temp_dir), client=FakeHttpClient(responses))
+            try:
+                first_summary = service.sync(max_pages=1, limit=2, delay_seconds=0)
+                self.assertEqual(first_summary.updated_count, 2)
+
+                empty_run_id = service.store.begin_sync(mode="incremental", started_at=utc_now())
+                service.store.finish_sync(
+                    run_id=empty_run_id,
+                    finished_at=utc_now(),
+                    discovered_count=0,
+                    fetched_count=0,
+                    updated_count=0,
+                )
+
+                result = service.export_social_packages(
+                    run_id=empty_run_id,
+                    output_root=Path(temp_dir) / "exports" / "social",
+                    fallback_recent_limit=2,
+                )
+
+                self.assertEqual(result.selection_mode, "recent_backfill")
+                self.assertEqual(result.requested_fallback_recent_limit, 2)
+                self.assertEqual(result.article_count, 2)
+
+                package_dir_143 = result.batch_dir / "article-000143"
+                self.assertTrue((package_dir_143 / "package.json").exists())
+                article_143_payload = json.loads((package_dir_143 / "article.json").read_text(encoding="utf-8"))
+                self.assertEqual(article_143_payload["article"]["change_type"], "backfill_recent")
             finally:
                 service.close()
 

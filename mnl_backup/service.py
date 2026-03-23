@@ -172,9 +172,20 @@ class BackupService:
         run_id: int,
         output_root: Path,
         timestamp: Optional[datetime] = None,
+        fallback_recent_limit: int = 0,
     ) -> SocialExportResult:
         run_row = self.store.fetch_sync_run(run_id)
         run_articles = self.store.fetch_run_manifest_rows(run_id)
+        selection_mode = "run_articles"
+        if not run_articles and fallback_recent_limit > 0:
+            run_articles = [
+                {
+                    "idxno": int(row["idxno"]),
+                    "change_type": "backfill_recent",
+                }
+                for row in self.store.fetch_recent_articles(limit=fallback_recent_limit)
+            ]
+            selection_mode = "recent_backfill"
         article_payloads = []
         for row in run_articles:
             article_row = self.store.fetch_article_row(int(row["idxno"]))
@@ -225,13 +236,16 @@ class BackupService:
                     ],
                 }
             )
-        return create_social_export_batch(
+        result = create_social_export_batch(
             data_dir=self.data_dir,
             output_root=Path(output_root),
             run_row=run_row,
             article_payloads=article_payloads,
             timestamp=timestamp,
         )
+        result.selection_mode = selection_mode
+        result.requested_fallback_recent_limit = fallback_recent_limit
+        return result
 
     def restore_state(self, snapshot_path: Path, destination_root: Path) -> None:
         restore_snapshot(Path(snapshot_path), Path(destination_root))
