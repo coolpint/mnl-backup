@@ -19,6 +19,40 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(page.items[0].section, "경제")
         self.assertEqual(page.items[0].author_name, "최보람 기자")
 
+    def test_parse_list_page_supports_current_text_list_markup(self) -> None:
+        html_text = """
+        <div class="altlist-count">총 <strong>99</strong>건</div>
+        <script>params['list_per_page'] = "20";</script>
+        <article id="section-list" class="altlist-body">
+          <ul class="altlist-text">
+            <li class="altlist-text-item">
+              <div class="altlist-text-group">
+                <H2 class="altlist-subject">
+                  <a href="https://www.moneynlaw.co.kr/news/articleView.html?idxno=355" target="_top">
+                    '망작' 평가가 일주일만에 돌변
+                  </a>
+                </H2>
+              </div>
+              <div class="altlist-info">
+                <div class="altlist-info-item">테크/스타트업</div>
+                <div class="altlist-info-item">머니앤로</div>
+                <div class="altlist-info-item">03-28 09:13</div>
+              </div>
+            </li>
+          </ul>
+        </article>
+        """
+
+        page = parse_list_page(html_text, page_number=1)
+
+        self.assertEqual(page.total_count, 99)
+        self.assertEqual(page.list_per_page, 20)
+        self.assertEqual(len(page.items), 1)
+        self.assertEqual(page.items[0].idxno, 355)
+        self.assertEqual(page.items[0].section, "테크/스타트업")
+        self.assertEqual(page.items[0].author_name, "머니앤로")
+        self.assertEqual(page.items[0].listed_at, "03-28 09:13")
+
     def test_parse_article_with_primary_image(self) -> None:
         html_text = (FIXTURE_DIR / "article_143.html").read_text(encoding="utf-8")
         article = parse_article_html(
@@ -49,4 +83,3 @@ class ParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -27,7 +27,7 @@ JSON_LD_RE = re.compile(
 LIST_TOTAL_RE = re.compile(r"총\s*<strong>(?P<count>[\d,]+)</strong>건")
 LIST_PER_PAGE_RE = re.compile(r"params\['list_per_page'\]\s*=\s*\"(?P<count>\d+)\";")
 LIST_ITEM_RE = re.compile(
-    r'<li class="altlist-webzine-item">(?P<item>.*?)</li>',
+    r'<li\b[^>]*class="[^"]*\baltlist-(?:webzine|text)-item\b[^"]*"[^>]*>(?P<item>.*?)</li>',
     re.IGNORECASE | re.DOTALL,
 )
 LIST_LINK_RE = re.compile(
